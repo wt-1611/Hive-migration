@@ -7,4 +7,4 @@
 1. 对单表进行迁移
 3. 对整库进行迁移
 
-addr：opslogs.top
+addr：http://opslogs.top
