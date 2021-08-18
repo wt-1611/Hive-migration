@@ -3,7 +3,8 @@
 # author:	wen tian				      #
 # date	:	2021-8-17				      #
 # versin:	v0.1				              #
-# hive迁移脚本,上TB数据不建议使用			      #
+# export script						      #
+# hadoop_one->Jump Server				      #
 ###############################################################
 read -p  "please input hive user:" user
 read -s  -p  "please input hive user password:" pass
@@ -58,6 +59,25 @@ DB(){
 	done	
 }
 
+DB_SELECT(){
+	TEST
+	CONN 'show databases;'
+	read -p "Select the database to export: " DX
+	echo -e "\033[1;35m export ..... \033[0m"
+	tb=`beeline -n$user -p$pass -e "use $DX;show tables" 2>/dev/null | sed -e "s/|//g" -e "s/-//g"  -e "s/+//g" | grep -v "^$" |sed "1d"|wc -w`
+                count=0
+                for a in `beeline -n$user -p$pass -e "use $DX;show tables" 2>/dev/null | sed -e "s/|//g" -e "s/-//g"  -e "s/+//g" | grep -v "^$" |sed "1d"`;do
+                        beeline -n$user -p$pass -e "export table $DX.$a to '/data/$DX.$a;'" 2>/dev/null
+                        if [  $? -eq 0 ];then
+                                let count+=1
+                                printf  "\e[1;32mSUSSES [%d/%s:%d]\e[0m\r"  $count $DX $tb
+                        else
+                                echo -e "\033[1;31merror: $DX.$a\033[0m"      
+                                exit
+                        fi
+                done
+
+}
 
 TB(){
 	TEST
@@ -82,7 +102,7 @@ GET(){
 				echo -e "\033[1;31mThe /home/hdfs/data directory already exists on the local file system\033[0m"
 				exit 99		
 			fi 
-
+while true;do
 	case $get in 
 		N)
 			exit 1
@@ -90,13 +110,13 @@ GET(){
 		Y)
 			echo -e "\033[1;35mdownloading ......\033[0m"
 			sudo -u hdfs hdfs dfs  -get /data /home/hdfs/
+			break
 			;;
 		*)
 			echo -e "\033[1;31mERROR!\033[0m"
-			exit 1
 	
 	esac
-
+done
 }
 
 CD="/home/hdfs"
@@ -110,9 +130,25 @@ case $DIR in
 		exit 
 	;;
 	Y)
-		cd $CD;tar czvf data.tar.gz data  &>/dev/null
-		cd $CD;scp $tar exe.sh $1@$2:/home/hdfs/ &>/dev/null
+		cd $CD; tar czvf data.tar.gz data  &>/dev/null
+		cd $CD; scp $tar  $MOVER_USER@$MOVER_HOST:/home/hdfs/ &>/dev/null
 		if [ $? -eq 0 ];then echo -e "\033[1;32msend to $2:$tar\033[0m" ;else echo -e "\033[1;31msend false\033[0m";fi
+		read -p 'Clean up the environment? Y/N' c
+		while true;do
+			case $c in
+				Y)
+				rm -fr /home/hdfs/data 
+				rm -fr $tar
+				sudo -u hdfs hdfs dfs -rm -r /data 
+				break
+				;;
+				N)
+				exit
+				;;
+				*)
+				echo -e "\033[1;31minpur error\033[0m"
+			esac
+		done
 	;;
 	*)
 		echo -e "\033[1;31mInput error\033[0m"
@@ -124,44 +160,45 @@ esac
 read -p "Enter remote user:" MOVER_USER
 read -p "Enter remote host:" MOVER_HOST
 
-cat > $CD/exe.sh << eof
-set -x 
-#!/bin/bash
-tar xf $tar -C /home/hdfs 
-if [ `sudo -u hdfs hdfs dfs -ls /data 2>/dev/null| wc -l`  -eq  "0"  ];then 
-	sudo -u hdfs hdfs dfs -put /home/hdfs/data /
-	$CHMOD
-	sudo -u hdfs hdfs dfs -ls /data
-else
-	echo -e '\033[1;31merror:HDFS /data exists on the remote host!\033[0m'
-	exit
-fi
-eof
+#cat > $CD/exe.sh << eof
+#set -x 
+##!/bin/bash
+#tar xf $tar -C /home/hdfs 
+#if [ `sudo -u hdfs hdfs dfs -ls /data 2>/dev/null| wc -l`  -eq  "0"  ];then 
+#	sudo -u hdfs hdfs dfs -put /home/hdfs/data /
+#	$CHMOD
+#	sudo -u hdfs hdfs dfs -ls /data
+#else
+#	echo -e '\033[1;31merror:HDFS /data exists on the remote host!\033[0m'
+#	exit
+#fi
+#eof
 
-IMPORT(){
-	ssh $MOVER_USER@$MOVER_HOST "bash $CD/exe.sh;rm -f $CD/exe.sh"
+#IMPORT(){
+#	ssh $MOVER_USER@$MOVER_HOST "bash $CD/exe.sh;rm -f $CD/exe.sh"
+#
+#}
 
-}
-
-select W in DATABASE_ALL TABLE_SELECT  PARTITION_SELECT;do
+select W in DATABASE_ALL TABLE_SELECT  PARTITION_SELECT DB_SELECT;do
 	case $W in 
+		DB_SELECT)
+			DB_SELECT
+			GET
+			SCP
+			break
+			;;
 		DATABASE_ALL)
 			DB
 			GET
-			SCP $MOVER_USER $MOVER_HOST
-			IMPORT
+			SCP 
+		#	IMPORT
 			break
 			;;
 		TABLE_SELECT)
 			TB
 			GET
-			SCP $MOVER_USER $MOVER_HOST
-			IMPORT 
-			break
-			;;
-		PARTITION_SELECT)
-			echo "PARTITION_SELECT"
-			GET
+			SCP
+		#	IMPORT 
 			break
 			;;
 		*)
